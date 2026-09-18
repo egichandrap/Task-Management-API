@@ -19,6 +19,7 @@ type Task struct {
 	Title       string
 	Description string
 	Status      TaskStatus
+	ProjectID   string
 	AssigneeID  string
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
@@ -36,15 +37,18 @@ type TaskLog struct {
 	CreatedAt time.Time
 }
 
-// NewTask is the factory of the aggregate. Business rule: every new task
-// starts in "pending" and always has an owner.
-func NewTask(title, description, assigneeID string) (*Task, error) {
+// NewTask is the factory of the aggregate. Business rules: every new task
+// starts in "pending", always has an owner, and always lives in a project.
+func NewTask(title, description, assigneeID, projectID string) (*Task, error) {
 	title = strings.TrimSpace(title)
 	if title == "" || len(title) > maxTitleLength {
 		return nil, ErrInvalidTitle
 	}
 	if assigneeID == "" {
 		return nil, ErrInvalidAssignee
+	}
+	if projectID == "" {
+		return nil, ErrInvalidProject
 	}
 
 	now := time.Now()
@@ -53,6 +57,7 @@ func NewTask(title, description, assigneeID string) (*Task, error) {
 		Title:       title,
 		Description: description,
 		Status:      StatusPending,
+		ProjectID:   projectID,
 		AssigneeID:  assigneeID,
 		CreatedAt:   now,
 		UpdatedAt:   now,
@@ -87,15 +92,15 @@ func (t *Task) ChangeDetails(title, description *string, status *TaskStatus) err
 	return nil
 }
 
-// AssignTo reassigns the task. Business invariants owned by the aggregate:
-//   - only the current assignee may reassign the task
+// AssignTo reassigns the task. Invariants owned by the aggregate:
+//   - a new assignee id is required
 //   - every reassignment must produce an audit log (TaskLog)
+//
+// Authorization (the changer must be a member of the task's project) is
+// enforced by the application service, which owns the membership data.
 func (t *Task) AssignTo(newAssigneeID, changedBy string) (*TaskLog, error) {
 	if newAssigneeID == "" {
 		return nil, ErrInvalidAssignee
-	}
-	if err := t.EnsureOwnedBy(changedBy); err != nil {
-		return nil, err
 	}
 
 	oldValue := t.AssigneeID

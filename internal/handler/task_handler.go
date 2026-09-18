@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
@@ -17,7 +18,7 @@ import (
 // idiom, it is defined at the consumer side with only the operations the
 // handler needs; the application layer provides the implementation.
 type TaskUsecase interface {
-	Create(ctx context.Context, title, description, assigneeID string) (*task.Task, error)
+	Create(ctx context.Context, title, description, assigneeID, projectID string) (*task.Task, error)
 	List(ctx context.Context, filter task.Filter) ([]task.Task, int64, error)
 	Detail(ctx context.Context, id, userID string) (*task.Task, error)
 	Update(ctx context.Context, id, userID string, title, description, status string) (*task.Task, error)
@@ -40,6 +41,7 @@ type taskResponse struct {
 	Title       string    `json:"title"`
 	Description string    `json:"description"`
 	Status      string    `json:"status"`
+	ProjectID   string    `json:"project_id"`
 	AssigneeID  string    `json:"assignee_id"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
@@ -51,6 +53,7 @@ func toTaskResponse(t *task.Task) taskResponse {
 		Title:       t.Title,
 		Description: t.Description,
 		Status:      t.Status.String(),
+		ProjectID:   t.ProjectID,
 		AssigneeID:  t.AssigneeID,
 		CreatedAt:   t.CreatedAt,
 		UpdatedAt:   t.UpdatedAt,
@@ -68,18 +71,22 @@ func toTaskListResponse(tasks []task.Task) []taskResponse {
 type CreateTaskReq struct {
 	Title       string `json:"title" binding:"required"`
 	Description string `json:"description"`
+	ProjectID   string `json:"project_id" binding:"required"`
 }
 
 func (h *TaskHandler) Create(c *gin.Context) {
 	var req CreateTaskReq
 	if err := c.ShouldBindJSON(&req); err != nil {
+		slog.Warn("request body binding failed",
+			slog.String("request_id", c.GetString("request_id")),
+			slog.Any("error", err))
 		c.Error(customerrors.ErrBadRequest)
 		return
 	}
 
 	userID := c.GetString("user_id")
 
-	created, err := h.usecase.Create(c.Request.Context(), req.Title, req.Description, userID)
+	created, err := h.usecase.Create(c.Request.Context(), req.Title, req.Description, userID, req.ProjectID)
 	if err != nil {
 		c.Error(err)
 		return
@@ -137,6 +144,9 @@ func (h *TaskHandler) Update(c *gin.Context) {
 
 	var req UpdateTaskReq
 	if err := c.ShouldBindJSON(&req); err != nil {
+		slog.Warn("request body binding failed",
+			slog.String("request_id", c.GetString("request_id")),
+			slog.Any("error", err))
 		c.Error(customerrors.ErrBadRequest)
 		return
 	}
@@ -172,6 +182,9 @@ func (h *TaskHandler) Assign(c *gin.Context) {
 
 	var req AssignTaskReq
 	if err := c.ShouldBindJSON(&req); err != nil {
+		slog.Warn("request body binding failed",
+			slog.String("request_id", c.GetString("request_id")),
+			slog.Any("error", err))
 		c.Error(customerrors.ErrBadRequest)
 		return
 	}

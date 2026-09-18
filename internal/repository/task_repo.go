@@ -18,6 +18,7 @@ type taskModel struct {
 	Title       string `gorm:"type:varchar(255);not null"`
 	Description string `gorm:"type:text"`
 	Status      string `gorm:"type:varchar(20);not null"`
+	ProjectID   string `gorm:"type:uuid;not null;index"`
 	AssigneeID  string `gorm:"type:uuid;not null;index"`
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
@@ -44,6 +45,7 @@ func taskToDomain(m taskModel) *task.Task {
 		Title:       m.Title,
 		Description: m.Description,
 		Status:      task.TaskStatus(m.Status),
+		ProjectID:   m.ProjectID,
 		AssigneeID:  m.AssigneeID,
 		CreatedAt:   m.CreatedAt,
 		UpdatedAt:   m.UpdatedAt,
@@ -56,6 +58,7 @@ func taskFromDomain(t *task.Task) taskModel {
 		Title:       t.Title,
 		Description: t.Description,
 		Status:      t.Status.String(),
+		ProjectID:   t.ProjectID,
 		AssigneeID:  t.AssigneeID,
 		CreatedAt:   t.CreatedAt,
 		UpdatedAt:   t.UpdatedAt,

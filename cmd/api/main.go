@@ -9,6 +9,7 @@ import (
 	"task-api/internal/handler"
 	"task-api/internal/middleware"
 	"task-api/internal/repository"
+	projectusecase "task-api/internal/usecase/project"
 	taskusecase "task-api/internal/usecase/task"
 	userusecase "task-api/internal/usecase/user"
 	"task-api/pkg/logger"
@@ -55,15 +56,18 @@ func main() {
 	// 1. Repositories (infrastructure adapters implementing domain ports)
 	userRepo := repository.NewUserRepository(db)
 	taskRepo := repository.NewTaskRepository(db)
+	projectRepo := repository.NewProjectRepository(db)
 	idemStore := repository.NewIdempotencyStore(db)
 
 	// 2. Usecases (application layer, one service per bounded context)
 	authUsecase := userusecase.New(userRepo, utils.JWTIssuer{Secret: cfg.JWTSecret}, logger.Log)
-	taskUsecase := taskusecase.New(taskRepo, logger.Log)
+	taskUsecase := taskusecase.New(taskRepo, userRepo, projectRepo, logger.Log)
+	projectUsecase := projectusecase.New(projectRepo, userRepo, logger.Log)
 
 	// 3. Handlers (transport layer)
 	authHandler := handler.NewAuthHandler(authUsecase)
 	taskHandler := handler.NewTaskHandler(taskUsecase)
+	projectHandler := handler.NewProjectHandler(projectUsecase)
 
 	// 4. Router
 	gin.SetMode(gin.ReleaseMode)
@@ -86,6 +90,13 @@ func main() {
 			protected.PUT("/tasks/:id", taskHandler.Update)
 			protected.DELETE("/tasks/:id", taskHandler.Delete)
 			protected.POST("/tasks/:id/assign", taskHandler.Assign)
+
+			protected.POST("/projects", projectHandler.Create)
+			protected.GET("/projects", projectHandler.ListMine)
+			protected.GET("/projects/:id", projectHandler.Detail)
+			protected.POST("/projects/:id/members", projectHandler.AddMember)
+			protected.GET("/projects/:id/members", projectHandler.ListMembers)
+			protected.DELETE("/projects/:id/members/:userId", projectHandler.RemoveMember)
 		}
 	}
 

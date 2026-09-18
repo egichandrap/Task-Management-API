@@ -92,14 +92,66 @@ func (f *fakeTaskRepo) SaveAssignment(_ context.Context, t *task.Task, log *task
 	return nil
 }
 
+// fakeUsers implements UserChecker in memory for unit tests.
+type fakeUsers struct {
+	exists bool
+	err    error
+}
+
+func (f *fakeUsers) Exists(_ context.Context, _ string) (bool, error) {
+	return f.exists, f.err
+}
+
+// fakeProjects implements MembershipChecker in memory for unit tests.
+type fakeProjects struct {
+	member map[string]map[string]bool // projectID -> userID -> member
+	err    error
+}
+
+func newFakeProjects() *fakeProjects {
+	return &fakeProjects{member: map[string]map[string]bool{}}
+}
+
+func (f *fakeProjects) addMember(projectID, userID string) {
+	if f.member[projectID] == nil {
+		f.member[projectID] = map[string]bool{}
+	}
+	f.member[projectID][userID] = true
+}
+
+func (f *fakeProjects) IsMember(_ context.Context, projectID, userID string) (bool, error) {
+	if f.err != nil {
+		return false, f.err
+	}
+	return f.member[projectID][userID], nil
+}
+
+// defaultProjects seeds the project used by seedTask with its usual cast:
+// user-1, user-2, and user-3 are all members of "project-1".
+func defaultProjects() *fakeProjects {
+	projects := newFakeProjects()
+	for _, u := range []string{"user-1", "user-2", "user-3"} {
+		projects.addMember("project-1", u)
+	}
+	return projects
+}
+
 func newTaskUsecase(repo task.Repository) *taskUsecase {
+	return newTaskUsecaseWith(repo, &fakeUsers{exists: true}, defaultProjects())
+}
+
+func newTaskUsecaseWithUsers(repo task.Repository, users UserChecker) *taskUsecase {
+	return newTaskUsecaseWith(repo, users, defaultProjects())
+}
+
+func newTaskUsecaseWith(repo task.Repository, users UserChecker, projects MembershipChecker) *taskUsecase {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	return New(repo, log)
+	return New(repo, users, projects, log)
 }
 
 func seedTask(t *testing.T, repo *fakeTaskRepo, assignee string) *task.Task {
 	t.Helper()
-	tsk, err := task.NewTask("Old title", "Old description", assignee)
+	tsk, err := task.NewTask("Old title", "Old description", assignee, "project-1")
 	if err != nil {
 		t.Fatalf("seed failed: %v", err)
 	}
@@ -112,12 +164,15 @@ func TestTaskUsecaseCreate(t *testing.T) {
 		repo := newFakeTaskRepo()
 		uc := newTaskUsecase(repo)
 
-		created, err := uc.Create(context.Background(), "Write report", "Quarterly report", "user-1")
+		created, err := uc.Create(context.Background(), "Write report", "Quarterly report", "user-1", "project-1")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		if created.Status != task.StatusPending {
 			t.Fatalf("expected pending, got %q", created.Status)
+		}
+		if created.ProjectID != "project-1" {
+			t.Fatalf("expected project project-1, got %q", created.ProjectID)
 		}
 		if len(repo.created) != 1 {
 			t.Fatalf("expected repository create to be called once, got %d", len(repo.created))
@@ -128,7 +183,7 @@ func TestTaskUsecaseCreate(t *testing.T) {
 		repo := newFakeTaskRepo()
 		uc := newTaskUsecase(repo)
 
-		_, err := uc.Create(context.Background(), "   ", "", "user-1")
+		_, err := uc.Create(context.Background(), "   ", "", "user-1", "project-1")
 		if err != customerrors.ErrBadRequest {
 			t.Fatalf("expected ErrBadRequest, got %v", err)
 		}
@@ -137,13 +192,40 @@ func TestTaskUsecaseCreate(t *testing.T) {
 		}
 	})
 
-	t.Run("missing assignee is rejected", func(t *testing.T) {
+	t.Run("missing project is rejected", func(t *testing.T) {
 		repo := newFakeTaskRepo()
 		uc := newTaskUsecase(repo)
 
-		_, err := uc.Create(context.Background(), "Write report", "", "")
+		_, err := uc.Create(context.Background(), "Write report", "", "user-1", "")
 		if err != customerrors.ErrBadRequest {
 			t.Fatalf("expected ErrBadRequest, got %v", err)
+		}
+	})
+
+	t.Run("creator who is not a project member is forbidden", func(t *testing.T) {
+		repo := newFakeTaskRepo()
+		uc := newTaskUsecaseWith(repo, &fakeUsers{exists: true}, newFakeProjects())
+
+		_, err := uc.Create(context.Background(), "Write report", "", "user-1", "project-1")
+		if err != customerrors.ErrForbidden {
+			t.Fatalf("expected ErrForbidden, got %v", err)
+		}
+		if len(repo.created) != 0 {
+			t.Fatal("expected repository not to be called")
+		}
+	})
+
+	t.Run("membership check failure maps to internal server error", func(t *testing.T) {
+		repo := newFakeTaskRepo()
+		broken := &fakeProjects{err: errors.New("db down")}
+		uc := newTaskUsecaseWith(repo, &fakeUsers{exists: true}, broken)
+
+		_, err := uc.Create(context.Background(), "Write report", "", "user-1", "project-1")
+		if err != customerrors.ErrInternalServer {
+			t.Fatalf("expected ErrInternalServer, got %v", err)
+		}
+		if len(repo.created) != 0 {
+			t.Fatal("expected repository not to be called")
 		}
 	})
 
@@ -152,7 +234,7 @@ func TestTaskUsecaseCreate(t *testing.T) {
 		repo.errCreate = errors.New("db down")
 		uc := newTaskUsecase(repo)
 
-		_, err := uc.Create(context.Background(), "Write report", "", "user-1")
+		_, err := uc.Create(context.Background(), "Write report", "", "user-1", "project-1")
 		if err != customerrors.ErrInternalServer {
 			t.Fatalf("expected ErrInternalServer, got %v", err)
 		}
@@ -278,13 +360,92 @@ func TestTaskUsecaseAssign(t *testing.T) {
 		}
 	})
 
-	t.Run("non-assignee cannot reassign", func(t *testing.T) {
+	t.Run("a project member who is not the assignee can reassign", func(t *testing.T) {
 		repo := newFakeTaskRepo()
 		tsk := seedTask(t, repo, "user-1")
 		uc := newTaskUsecase(repo)
 
-		if err := uc.Assign(context.Background(), tsk.ID, "user-3", "user-2"); err != customerrors.ErrNotFound {
-			t.Fatalf("expected ErrNotFound, got %v", err)
+		if err := uc.Assign(context.Background(), tsk.ID, "user-3", "user-2"); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(repo.assigned) != 1 {
+			t.Fatalf("expected one assignment persist, got %d", len(repo.assigned))
+		}
+		if repo.assigned[0].AssigneeID != "user-3" {
+			t.Fatalf("expected persisted assignee user-3, got %q", repo.assigned[0].AssigneeID)
+		}
+		if repo.assignLogs[0].ChangedBy != "user-2" {
+			t.Fatalf("expected changed_by user-2, got %q", repo.assignLogs[0].ChangedBy)
+		}
+	})
+
+	t.Run("a non-member cannot assign", func(t *testing.T) {
+		repo := newFakeTaskRepo()
+		tsk := seedTask(t, repo, "user-1")
+		projects := defaultProjects()
+		uc := newTaskUsecaseWith(repo, &fakeUsers{exists: true}, projects)
+
+		// user-outsider is an existing user but not a member of project-1.
+		if err := uc.Assign(context.Background(), tsk.ID, "user-3", "user-outsider"); err != customerrors.ErrForbidden {
+			t.Fatalf("expected ErrForbidden, got %v", err)
+		}
+		if len(repo.assigned) != 0 {
+			t.Fatal("expected no assignment persist")
+		}
+	})
+
+	t.Run("assigning to a non-existent user is rejected without persisting", func(t *testing.T) {
+		repo := newFakeTaskRepo()
+		tsk := seedTask(t, repo, "user-1")
+		uc := newTaskUsecaseWithUsers(repo, &fakeUsers{exists: false})
+
+		err := uc.Assign(context.Background(), tsk.ID, "user-ghost", "user-1")
+		if err != customerrors.ErrBadRequest {
+			t.Fatalf("expected ErrBadRequest, got %v", err)
+		}
+		if len(repo.assigned) != 0 {
+			t.Fatal("expected no assignment persist")
+		}
+	})
+
+	t.Run("assigning to a non-member of the project is rejected", func(t *testing.T) {
+		repo := newFakeTaskRepo()
+		tsk := seedTask(t, repo, "user-1")
+		uc := newTaskUsecase(repo)
+
+		// user-outsider exists but is not a member of project-1.
+		err := uc.Assign(context.Background(), tsk.ID, "user-outsider", "user-1")
+		if err != customerrors.ErrBadRequest {
+			t.Fatalf("expected ErrBadRequest, got %v", err)
+		}
+		if len(repo.assigned) != 0 {
+			t.Fatal("expected no assignment persist")
+		}
+	})
+
+	t.Run("assignee existence check failure maps to internal server error", func(t *testing.T) {
+		repo := newFakeTaskRepo()
+		tsk := seedTask(t, repo, "user-1")
+		uc := newTaskUsecaseWithUsers(repo, &fakeUsers{err: errors.New("db down")})
+
+		err := uc.Assign(context.Background(), tsk.ID, "user-2", "user-1")
+		if err != customerrors.ErrInternalServer {
+			t.Fatalf("expected ErrInternalServer, got %v", err)
+		}
+		if len(repo.assigned) != 0 {
+			t.Fatal("expected no assignment persist")
+		}
+	})
+
+	t.Run("membership check failure maps to internal server error", func(t *testing.T) {
+		repo := newFakeTaskRepo()
+		tsk := seedTask(t, repo, "user-1")
+		broken := &fakeProjects{err: errors.New("db down")}
+		uc := newTaskUsecaseWith(repo, &fakeUsers{exists: true}, broken)
+
+		err := uc.Assign(context.Background(), tsk.ID, "user-2", "user-1")
+		if err != customerrors.ErrInternalServer {
+			t.Fatalf("expected ErrInternalServer, got %v", err)
 		}
 		if len(repo.assigned) != 0 {
 			t.Fatal("expected no assignment persist")

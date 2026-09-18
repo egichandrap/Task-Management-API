@@ -36,7 +36,7 @@ type userRepo struct {
 	db *gorm.DB
 }
 
-func NewUserRepository(db *gorm.DB) user.Repository {
+func NewUserRepository(db *gorm.DB) *userRepo {
 	return &userRepo{db: db}
 }
 
@@ -55,6 +55,14 @@ func (r *userRepo) Create(ctx context.Context, u *user.User) error {
 		return user.ErrUsernameTaken
 	}
 	return err
+}
+
+// Exists reports whether a user with the given ID exists. It backs the
+// narrow UserChecker port consumed by the task application service.
+func (r *userRepo) Exists(ctx context.Context, id string) (bool, error) {
+	var count int64
+	err := r.db.WithContext(ctx).Model(&userModel{}).Where("id = ?", id).Count(&count).Error
+	return count > 0, err
 }
 
 func (r *userRepo) GetByUsername(ctx context.Context, username user.Username) (*user.User, error) {

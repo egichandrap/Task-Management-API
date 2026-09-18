@@ -22,6 +22,7 @@ func New(status int, code, message string) *AppError {
 
 var (
 	ErrUnauthorized   = New(401, "UNAUTHORIZED", "Unauthorized access")
+	ErrForbidden      = New(403, "FORBIDDEN", "Access to this resource is forbidden")
 	ErrNotFound       = New(404, "NOT_FOUND", "Resource not found")
 	ErrBadRequest     = New(400, "BAD_REQUEST", "Invalid request parameters")
 	ErrInternalServer = New(500, "INTERNAL_SERVER_ERROR", "An unexpected error occurred")

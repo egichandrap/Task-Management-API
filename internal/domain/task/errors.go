@@ -10,4 +10,5 @@ var (
 	ErrInvalidStatus   = errors.New("invalid task status")
 	ErrInvalidTitle    = errors.New("task title must be 1-255 characters")
 	ErrInvalidAssignee = errors.New("assignee id is required")
+	ErrInvalidProject  = errors.New("project id is required")
 )

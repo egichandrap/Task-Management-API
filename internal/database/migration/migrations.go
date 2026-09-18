@@ -10,6 +10,8 @@ func AllMigrations() []Migration {
 		migration004CreateIdempotencyRecordsTable(),
 		migration005AddIndexes(),
 		migration006AddIdempotencyStatus(),
+		migration007CreateProjectsTables(),
+		migration008AddTaskProjectID(),
 	}
 }
 
@@ -131,5 +133,58 @@ func migration006AddIdempotencyStatus() Migration {
 		Down: `
 		ALTER TABLE idempotency_records
 			DROP COLUMN IF EXISTS status;`,
+	}
+}
+
+// ---------------------------------------------------------------
+// 007 - Create projects and project_members tables
+// ---------------------------------------------------------------
+func migration007CreateProjectsTables() Migration {
+	return Migration{
+		Version:     7,
+		Description: "Create projects and project_members tables",
+		Up: `
+		CREATE TABLE IF NOT EXISTS projects (
+			id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			name       VARCHAR(255) NOT NULL,
+			owner_id   UUID NOT NULL,
+			created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+			CONSTRAINT fk_projects_owner FOREIGN KEY (owner_id) REFERENCES users(id) ON DELETE CASCADE
+		);
+
+		CREATE TABLE IF NOT EXISTS project_members (
+			project_id UUID NOT NULL,
+			user_id    UUID NOT NULL,
+			joined_at  TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+			PRIMARY KEY (project_id, user_id),
+			CONSTRAINT fk_project_members_project FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+			CONSTRAINT fk_project_members_user    FOREIGN KEY (user_id)    REFERENCES users(id) ON DELETE CASCADE
+		);
+
+		CREATE INDEX IF NOT EXISTS idx_project_members_user_id ON project_members(user_id);`,
+		Down: `
+		DROP TABLE IF EXISTS project_members;
+		DROP TABLE IF EXISTS projects;`,
+	}
+}
+
+// ---------------------------------------------------------------
+// 008 - Tasks belong to a project
+// ---------------------------------------------------------------
+func migration008AddTaskProjectID() Migration {
+	return Migration{
+		Version:     8,
+		Description: "Add NOT NULL project_id to tasks",
+		Up: `
+		ALTER TABLE tasks
+			ADD COLUMN project_id UUID NOT NULL,
+			ADD CONSTRAINT fk_tasks_project FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE;
+
+		CREATE INDEX IF NOT EXISTS idx_tasks_project_id ON tasks(project_id);`,
+		Down: `
+		DROP INDEX IF EXISTS idx_tasks_project_id;
+		ALTER TABLE tasks DROP CONSTRAINT IF EXISTS fk_tasks_project;
+		ALTER TABLE tasks DROP COLUMN IF EXISTS project_id;`,
 	}
 }

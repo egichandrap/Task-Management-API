@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 
 	"task-api/internal/domain/user"
@@ -35,6 +36,9 @@ type RegisterReq struct {
 func (h *AuthHandler) Register(c *gin.Context) {
 	var req RegisterReq
 	if err := c.ShouldBindJSON(&req); err != nil {
+		slog.Warn("request body binding failed",
+			slog.String("request_id", c.GetString("request_id")),
+			slog.Any("error", err))
 		c.Error(customerrors.ErrBadRequest)
 		return
 	}
@@ -51,6 +55,9 @@ func (h *AuthHandler) Register(c *gin.Context) {
 func (h *AuthHandler) Login(c *gin.Context) {
 	var req RegisterReq
 	if err := c.ShouldBindJSON(&req); err != nil {
+		slog.Warn("request body binding failed",
+			slog.String("request_id", c.GetString("request_id")),
+			slog.Any("error", err))
 		c.Error(customerrors.ErrBadRequest)
 		return
 	}

@@ -13,7 +13,7 @@ func TestNewTask(t *testing.T) {
 	t.Run("new task starts in pending with generated identity", func(t *testing.T) {
 		before := time.Now()
 
-		tsk, err := task.NewTask("Write report", "Quarterly report", "user-1")
+		tsk, err := task.NewTask("Write report", "Quarterly report", "user-1", "project-1")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -27,6 +27,9 @@ func TestNewTask(t *testing.T) {
 		if tsk.Title != "Write report" || tsk.Description != "Quarterly report" || tsk.AssigneeID != "user-1" {
 			t.Fatalf("unexpected fields: %+v", tsk)
 		}
+		if tsk.ProjectID != "project-1" {
+			t.Fatalf("expected project project-1, got %q", tsk.ProjectID)
+		}
 		if tsk.CreatedAt.Before(before) {
 			t.Fatal("expected created_at to be set by the domain")
 		}
@@ -36,7 +39,7 @@ func TestNewTask(t *testing.T) {
 	})
 
 	t.Run("trims surrounding whitespace from title", func(t *testing.T) {
-		tsk, err := task.NewTask("  Write report  ", "", "user-1")
+		tsk, err := task.NewTask("  Write report  ", "", "user-1", "project-1")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -47,7 +50,7 @@ func TestNewTask(t *testing.T) {
 
 	t.Run("rejects empty title", func(t *testing.T) {
 		for _, title := range []string{"", "   "} {
-			_, err := task.NewTask(title, "", "user-1")
+			_, err := task.NewTask(title, "", "user-1", "project-1")
 			if !errors.Is(err, task.ErrInvalidTitle) {
 				t.Fatalf("expected ErrInvalidTitle for %q, got %v", title, err)
 			}
@@ -55,22 +58,29 @@ func TestNewTask(t *testing.T) {
 	})
 
 	t.Run("rejects title longer than 255 characters", func(t *testing.T) {
-		_, err := task.NewTask(strings.Repeat("a", 256), "", "user-1")
+		_, err := task.NewTask(strings.Repeat("a", 256), "", "user-1", "project-1")
 		if !errors.Is(err, task.ErrInvalidTitle) {
 			t.Fatalf("expected ErrInvalidTitle, got %v", err)
 		}
 	})
 
 	t.Run("rejects empty assignee", func(t *testing.T) {
-		_, err := task.NewTask("Write report", "", "")
+		_, err := task.NewTask("Write report", "", "", "project-1")
 		if !errors.Is(err, task.ErrInvalidAssignee) {
 			t.Fatalf("expected ErrInvalidAssignee, got %v", err)
+		}
+	})
+
+	t.Run("rejects empty project", func(t *testing.T) {
+		_, err := task.NewTask("Write report", "", "user-1", "")
+		if !errors.Is(err, task.ErrInvalidProject) {
+			t.Fatalf("expected ErrInvalidProject, got %v", err)
 		}
 	})
 }
 
 func TestTaskEnsureOwnedBy(t *testing.T) {
-	tsk, _ := task.NewTask("Write report", "", "user-1")
+	tsk, _ := task.NewTask("Write report", "", "user-1", "project-1")
 
 	if err := tsk.EnsureOwnedBy("user-1"); err != nil {
 		t.Fatalf("expected owner to pass, got %v", err)
@@ -87,7 +97,7 @@ func TestTaskChangeDetails(t *testing.T) {
 	completed, _ := task.NewTaskStatus("completed")
 
 	t.Run("applies all changes", func(t *testing.T) {
-		tsk, _ := task.NewTask("Old title", "Old description", "user-1")
+		tsk, _ := task.NewTask("Old title", "Old description", "user-1", "project-1")
 
 		if err := tsk.ChangeDetails(&newTitle, &newDesc, &completed); err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -102,7 +112,7 @@ func TestTaskChangeDetails(t *testing.T) {
 	})
 
 	t.Run("nil means unchanged", func(t *testing.T) {
-		tsk, _ := task.NewTask("Old title", "Old description", "user-1")
+		tsk, _ := task.NewTask("Old title", "Old description", "user-1", "project-1")
 
 		if err := tsk.ChangeDetails(nil, nil, nil); err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -114,7 +124,7 @@ func TestTaskChangeDetails(t *testing.T) {
 	})
 
 	t.Run("rejects blank replacement title and keeps old value", func(t *testing.T) {
-		tsk, _ := task.NewTask("Old title", "", "user-1")
+		tsk, _ := task.NewTask("Old title", "", "user-1", "project-1")
 		blank := "   "
 
 		if err := tsk.ChangeDetails(&blank, nil, nil); !errors.Is(err, task.ErrInvalidTitle) {
@@ -128,7 +138,7 @@ func TestTaskChangeDetails(t *testing.T) {
 
 func TestTaskAssignTo(t *testing.T) {
 	t.Run("reassigns and produces an audit log", func(t *testing.T) {
-		tsk, _ := task.NewTask("Write report", "", "user-1")
+		tsk, _ := task.NewTask("Write report", "", "user-1", "project-1")
 		taskID := tsk.ID
 
 		logEntry, err := tsk.AssignTo("user-2", "user-1")
@@ -156,23 +166,23 @@ func TestTaskAssignTo(t *testing.T) {
 		}
 	})
 
-	t.Run("only the current assignee may reassign", func(t *testing.T) {
-		tsk, _ := task.NewTask("Write report", "", "user-1")
+	t.Run("any caller may reassign; authorization is not the aggregate's concern", func(t *testing.T) {
+		tsk, _ := task.NewTask("Write report", "", "user-1", "project-1")
 
 		logEntry, err := tsk.AssignTo("user-3", "user-2")
-		if !errors.Is(err, task.ErrForbidden) {
-			t.Fatalf("expected ErrForbidden, got %v", err)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
 		}
-		if logEntry != nil {
-			t.Fatal("expected no log on forbidden reassignment")
+		if tsk.AssigneeID != "user-3" {
+			t.Fatalf("expected assignee user-3, got %q", tsk.AssigneeID)
 		}
-		if tsk.AssigneeID != "user-1" {
-			t.Fatalf("expected assignee unchanged, got %q", tsk.AssigneeID)
+		if logEntry.ChangedBy != "user-2" {
+			t.Fatalf("expected changed_by user-2, got %q", logEntry.ChangedBy)
 		}
 	})
 
 	t.Run("rejects empty new assignee", func(t *testing.T) {
-		tsk, _ := task.NewTask("Write report", "", "user-1")
+		tsk, _ := task.NewTask("Write report", "", "user-1", "project-1")
 
 		_, err := tsk.AssignTo("", "user-1")
 		if !errors.Is(err, task.ErrInvalidAssignee) {
