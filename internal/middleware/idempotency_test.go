@@ -14,6 +14,16 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// Valid UUID keys per the API contract (Idempotency-Key must be a UUID).
+var (
+	key1       = "11111111-1111-4111-8111-111111111111"
+	sharedKey  = "22222222-2222-4222-8222-222222222222"
+	errKey     = "33333333-3333-4333-8333-333333333333"
+	raceKey    = "44444444-4444-4444-8444-444444444444"
+	cleanupKey = "55555555-5555-4555-8555-555555555555"
+	badKey     = "not-a-uuid"
+)
+
 // fakeStore implements IdempotencyStore in memory for unit tests.
 type fakeStore struct {
 	mu        sync.Mutex
@@ -60,6 +70,7 @@ func newIdempotencyRouter(store IdempotencyStore, userID string, handlerCalls *a
 		c.Set("user_id", userID)
 		c.Next()
 	})
+	r.Use(ErrorHandler())
 	r.POST("/tasks", Idempotency(store), func(c *gin.Context) {
 		handlerCalls.Add(1)
 		if work > 0 {
@@ -96,12 +107,30 @@ func TestIdempotency(t *testing.T) {
 		}
 	})
 
+	t.Run("malformed key is rejected as bad request", func(t *testing.T) {
+		store := newFakeStore()
+		var calls atomic.Int32
+		r := newIdempotencyRouter(store, "userA", &calls, 0)
+
+		w := doPost(r, badKey)
+
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400 for malformed Idempotency-Key, got %d", w.Code)
+		}
+		if calls.Load() != 0 {
+			t.Fatal("expected handler not to run")
+		}
+		if len(store.records) != 0 {
+			t.Fatal("expected nothing to be stored")
+		}
+	})
+
 	t.Run("first request executes the handler and stores the original status", func(t *testing.T) {
 		store := newFakeStore()
 		var calls atomic.Int32
 		r := newIdempotencyRouter(store, "userA", &calls, 0)
 
-		w := doPost(r, "key-1")
+		w := doPost(r, key1)
 
 		if w.Code != http.StatusCreated || calls.Load() != 1 {
 			t.Fatalf("expected 201 with one handler call, got %d/%d", w.Code, calls.Load())
@@ -109,7 +138,7 @@ func TestIdempotency(t *testing.T) {
 		if store.saveCalls != 1 {
 			t.Fatalf("expected one save, got %d", store.saveCalls)
 		}
-		if store.records["userA:key-1"].Status != http.StatusCreated {
+		if store.records["userA:"+key1].Status != http.StatusCreated {
 			t.Fatal("expected the original 201 status code to be stored")
 		}
 	})
@@ -119,8 +148,8 @@ func TestIdempotency(t *testing.T) {
 		var calls atomic.Int32
 		r := newIdempotencyRouter(store, "userA", &calls, 0)
 
-		doPost(r, "key-1")
-		w := doPost(r, "key-1")
+		doPost(r, key1)
+		w := doPost(r, key1)
 
 		if calls.Load() != 1 {
 			t.Fatalf("expected handler to run only once, ran %d times", calls.Load())
@@ -128,7 +157,7 @@ func TestIdempotency(t *testing.T) {
 		if w.Code != http.StatusCreated {
 			t.Fatalf("expected replayed status 201, got %d", w.Code)
 		}
-		if w.Body.String() != store.records["userA:key-1"].Body {
+		if w.Body.String() != store.records["userA:"+key1].Body {
 			t.Fatal("expected replayed body to match stored body")
 		}
 	})
@@ -139,8 +168,8 @@ func TestIdempotency(t *testing.T) {
 		rA := newIdempotencyRouter(store, "userA", &callsA, 0)
 		rB := newIdempotencyRouter(store, "userB", &callsB, 0)
 
-		wA := doPost(rA, "shared-key")
-		wB := doPost(rB, "shared-key")
+		wA := doPost(rA, sharedKey)
+		wB := doPost(rB, sharedKey)
 
 		if callsA.Load() != 1 || callsB.Load() != 1 {
 			t.Fatalf("expected each user to execute the handler once, got %d and %d", callsA.Load(), callsB.Load())
@@ -148,7 +177,7 @@ func TestIdempotency(t *testing.T) {
 		if wB.Body.String() == wA.Body.String() {
 			t.Fatal("expected userB to receive its own response, not userA's")
 		}
-		if _, ok := store.records["userB:shared-key"]; !ok {
+		if _, ok := store.records["userB:"+sharedKey]; !ok {
 			t.Fatal("expected a separate record scoped to userB")
 		}
 	})
@@ -159,7 +188,7 @@ func TestIdempotency(t *testing.T) {
 		var calls atomic.Int32
 		r := newIdempotencyRouter(store, "userA", &calls, 0)
 
-		w := doPost(r, "key-1")
+		w := doPost(r, key1)
 
 		if w.Code != http.StatusCreated || calls.Load() != 1 {
 			t.Fatalf("expected handler to execute despite store failure, got %d/%d", w.Code, calls.Load())
@@ -180,10 +209,10 @@ func TestIdempotency(t *testing.T) {
 
 		w := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodPost, "/broken", bytes.NewBufferString(`{}`))
-		req.Header.Set("Idempotency-Key", "err-key")
+		req.Header.Set("Idempotency-Key", errKey)
 		r.ServeHTTP(w, req)
 
-		if _, ok := store.records["userA:err-key"]; ok {
+		if _, ok := store.records["userA:"+errKey]; ok {
 			t.Fatal("expected error response not to be stored")
 		}
 	})
@@ -199,7 +228,7 @@ func TestIdempotency(t *testing.T) {
 		for i := 0; i < n; i++ {
 			go func() {
 				defer wg.Done()
-				doPost(r, "race-key")
+				doPost(r, raceKey)
 			}()
 		}
 		wg.Wait()
@@ -217,9 +246,9 @@ func TestIdempotency(t *testing.T) {
 		var calls atomic.Int32
 		r := newIdempotencyRouter(store, "userA", &calls, 0)
 
-		doPost(r, "cleanup-key")
+		doPost(r, cleanupKey)
 
-		if _, loaded := idempotencyLocks.Load("userA:cleanup-key"); loaded {
+		if _, loaded := idempotencyLocks.Load("userA:" + cleanupKey); loaded {
 			t.Fatal("expected lock entry to be removed after the request")
 		}
 	})

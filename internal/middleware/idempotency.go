@@ -7,7 +7,10 @@ import (
 	"sync"
 	"time"
 
+	"task-api/pkg/errors"
+
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
 
 // IdempotencyRecord is a stored response that can be replayed.
@@ -50,6 +53,13 @@ func Idempotency(store IdempotencyStore) gin.HandlerFunc {
 		idemKey := c.GetHeader("Idempotency-Key")
 		if idemKey == "" {
 			c.Next()
+			return
+		}
+		// The API contract defines the key as a UUID; reject anything else
+		// before it can pollute the store.
+		if err := uuid.Validate(idemKey); err != nil {
+			c.Error(customerrors.ErrBadRequest)
+			c.Abort()
 			return
 		}
 

@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"time"
 
 	"task-api/internal/domain/task"
@@ -158,6 +159,17 @@ func (r *taskRepo) SaveAssignment(ctx context.Context, t *task.Task, log *task.T
 			ChangedBy: log.ChangedBy,
 			CreatedAt: log.CreatedAt,
 		}
-		return tx.Create(&lm).Error
+		if err := tx.Create(&lm).Error; err != nil {
+			return err
+		}
+
+		// Mock notification as part of the assignment flow. In production this
+		// would be an outbox/event publish; here a structured log is enough.
+		slog.Default().Info("assignment notification sent",
+			slog.String("task_id", t.ID),
+			slog.String("new_assignee_id", t.AssigneeID),
+			slog.String("changed_by", log.ChangedBy),
+		)
+		return nil
 	})
 }
