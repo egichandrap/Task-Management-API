@@ -1,0 +1,489 @@
+{
+	"info": {
+		"_postman_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+		"name": "Task Management API",
+		"description": "Postman collection for Task Management REST API.\n\n**Flow:**\n1. Register a user\n2. Login to get JWT token (auto-saved to variable)\n3. Use Task endpoints (token is auto-attached)\n\n**Variables:**\n- `base_url`: Server base URL (default: http://localhost:8080)\n- `token`: JWT token (auto-set after Login)\n- `task_id`: Task ID (auto-set after Create Task)\n- `user_id`: User ID (auto-set after Register)",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"variable": [
+		{
+			"key": "base_url",
+			"value": "http://localhost:8080",
+			"type": "string"
+		},
+		{
+			"key": "token",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "task_id",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "user_id",
+			"value": "",
+			"type": "string"
+		}
+	],
+	"item": [
+		{
+			"name": "Auth",
+			"description": "Authentication endpoints: Register and Login.",
+			"item": [
+				{
+					"name": "Register",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 201) {",
+									"    var jsonData = pm.response.json();",
+									"    pm.collectionVariables.set('user_id', jsonData.data.id);",
+									"    pm.test('Register successful', function () {",
+									"        pm.expect(jsonData.status).to.eql('success');",
+									"    });",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"username\": \"testuser\",\n    \"password\": \"password123\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/register",
+							"host": ["{{base_url}}"],
+							"path": ["api", "register"]
+						},
+						"description": "Register a new user.\n\n**Request Body:**\n- `username` (string, required)\n- `password` (string, required)\n\n**Auto-saves:** `user_id` variable on success."
+					},
+					"response": [
+						{
+							"name": "201 - Success",
+							"originalRequest": {
+								"method": "POST",
+								"header": [{"key": "Content-Type", "value": "application/json"}],
+								"body": {"mode": "raw", "raw": "{\n    \"username\": \"testuser\",\n    \"password\": \"password123\"\n}"},
+								"url": {"raw": "{{base_url}}/api/register", "host": ["{{base_url}}"], "path": ["api", "register"]}
+							},
+							"status": "Created",
+							"code": 201,
+							"body": "{\n    \"status\": \"success\",\n    \"data\": {\n        \"id\": \"uuid-here\",\n        \"username\": \"testuser\"\n    }\n}"
+						},
+						{
+							"name": "409 - Conflict (User exists)",
+							"originalRequest": {
+								"method": "POST",
+								"header": [{"key": "Content-Type", "value": "application/json"}],
+								"body": {"mode": "raw", "raw": "{\n    \"username\": \"testuser\",\n    \"password\": \"password123\"\n}"},
+								"url": {"raw": "{{base_url}}/api/register", "host": ["{{base_url}}"], "path": ["api", "register"]}
+							},
+							"status": "Conflict",
+							"code": 409,
+							"body": "{\n    \"status\": \"error\",\n    \"code\": \"CONFLICT\",\n    \"message\": \"Resource already exists\",\n    \"timestamp\": \"2026-09-18T12:00:00Z\"\n}"
+						}
+					]
+				},
+				{
+					"name": "Login",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 200) {",
+									"    var jsonData = pm.response.json();",
+									"    pm.collectionVariables.set('token', jsonData.data.token);",
+									"    pm.test('Login successful, token saved', function () {",
+									"        pm.expect(jsonData.data.token).to.be.a('string');",
+									"    });",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"username\": \"testuser\",\n    \"password\": \"password123\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/login",
+							"host": ["{{base_url}}"],
+							"path": ["api", "login"]
+						},
+						"description": "Login with existing credentials to receive a JWT token.\n\n**Request Body:**\n- `username` (string, required)\n- `password` (string, required)\n\n**Auto-saves:** `token` variable on success. All subsequent protected requests will use this token automatically."
+					},
+					"response": [
+						{
+							"name": "200 - Success",
+							"originalRequest": {
+								"method": "POST",
+								"header": [{"key": "Content-Type", "value": "application/json"}],
+								"body": {"mode": "raw", "raw": "{\n    \"username\": \"testuser\",\n    \"password\": \"password123\"\n}"},
+								"url": {"raw": "{{base_url}}/api/login", "host": ["{{base_url}}"], "path": ["api", "login"]}
+							},
+							"status": "OK",
+							"code": 200,
+							"body": "{\n    \"status\": \"success\",\n    \"data\": {\n        \"token\": \"eyJhbGciOiJIUzI1NiIs...\"\n    }\n}"
+						},
+						{
+							"name": "401 - Unauthorized",
+							"originalRequest": {
+								"method": "POST",
+								"header": [{"key": "Content-Type", "value": "application/json"}],
+								"body": {"mode": "raw", "raw": "{\n    \"username\": \"testuser\",\n    \"password\": \"wrongpassword\"\n}"},
+								"url": {"raw": "{{base_url}}/api/login", "host": ["{{base_url}}"], "path": ["api", "login"]}
+							},
+							"status": "Unauthorized",
+							"code": 401,
+							"body": "{\n    \"status\": \"error\",\n    \"code\": \"UNAUTHORIZED\",\n    \"message\": \"Unauthorized access\",\n    \"timestamp\": \"2026-09-18T12:00:00Z\"\n}"
+						}
+					]
+				}
+			]
+		},
+		{
+			"name": "Tasks",
+			"description": "Task CRUD endpoints. All require JWT authentication via Bearer token.",
+			"item": [
+				{
+					"name": "Create Task",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 201) {",
+									"    var jsonData = pm.response.json();",
+									"    pm.collectionVariables.set('task_id', jsonData.data.id);",
+									"    pm.test('Task created successfully', function () {",
+									"        pm.expect(jsonData.status).to.eql('success');",
+									"        pm.expect(jsonData.data.title).to.be.a('string');",
+									"        pm.expect(jsonData.data.status).to.eql('pending');",
+									"    });",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							},
+							{
+								"key": "Idempotency-Key",
+								"value": "{{$guid}}",
+								"description": "Optional. Set a unique key to prevent duplicate task creation. Uses Postman dynamic variable {{$guid}} to auto-generate a UUID.",
+								"disabled": false
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"title\": \"Implement Login Feature\",\n    \"description\": \"Create login page with JWT authentication\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/tasks",
+							"host": ["{{base_url}}"],
+							"path": ["api", "tasks"]
+						},
+						"description": "Create a new task. The task is automatically assigned to the authenticated user.\n\n**Request Body:**\n- `title` (string, required)\n- `description` (string, optional)\n\n**Headers:**\n- `Idempotency-Key` (optional): UUID to prevent duplicate creation on retries.\n\n**Auto-saves:** `task_id` variable on success."
+					},
+					"response": [
+						{
+							"name": "201 - Created",
+							"originalRequest": {
+								"method": "POST",
+								"header": [
+									{"key": "Content-Type", "value": "application/json"},
+									{"key": "Authorization", "value": "Bearer {{token}}"},
+									{"key": "Idempotency-Key", "value": "unique-key-123"}
+								],
+								"body": {"mode": "raw", "raw": "{\n    \"title\": \"Implement Login Feature\",\n    \"description\": \"Create login page with JWT authentication\"\n}"},
+								"url": {"raw": "{{base_url}}/api/tasks", "host": ["{{base_url}}"], "path": ["api", "tasks"]}
+							},
+							"status": "Created",
+							"code": 201,
+							"body": "{\n    \"status\": \"success\",\n    \"data\": {\n        \"id\": \"uuid-here\",\n        \"title\": \"Implement Login Feature\",\n        \"description\": \"Create login page with JWT authentication\",\n        \"status\": \"pending\",\n        \"assignee_id\": \"user-uuid\",\n        \"created_at\": \"2026-09-18T12:00:00Z\",\n        \"updated_at\": \"2026-09-18T12:00:00Z\"\n    }\n}"
+						}
+					]
+				},
+				{
+					"name": "Create Task (Idempotency Test - Same Key)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							},
+							{
+								"key": "Idempotency-Key",
+								"value": "test-idempotency-key-001",
+								"description": "Use the SAME key to test idempotency. First call creates, second call returns cached response."
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"title\": \"Idempotency Test Task\",\n    \"description\": \"Send this request twice with the same Idempotency-Key. The second request should return the same response without creating a duplicate.\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/tasks",
+							"host": ["{{base_url}}"],
+							"path": ["api", "tasks"]
+						},
+						"description": "**Idempotency Test:** Send this request multiple times with the same `Idempotency-Key` header value. Only the first request creates a task; subsequent requests return the cached original response."
+					},
+					"response": []
+				},
+				{
+					"name": "List Tasks",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/tasks?limit=10&page=1",
+							"host": ["{{base_url}}"],
+							"path": ["api", "tasks"],
+							"query": [
+								{
+									"key": "limit",
+									"value": "10",
+									"description": "Number of items per page (default: 10)"
+								},
+								{
+									"key": "page",
+									"value": "1",
+									"description": "Page number (default: 1)"
+								},
+								{
+									"key": "status",
+									"value": "pending",
+									"description": "Filter by status: pending, in-progress, completed",
+									"disabled": true
+								},
+								{
+									"key": "title",
+									"value": "Login",
+									"description": "Filter by title (partial match / LIKE search)",
+									"disabled": true
+								}
+							]
+						},
+						"description": "List all tasks assigned to the authenticated user with pagination and optional filters.\n\n**Query Parameters:**\n- `limit` (int, default: 10) - Items per page\n- `page` (int, default: 1) - Page number\n- `status` (string, optional) - Filter: `pending`, `in-progress`, `completed`\n- `title` (string, optional) - Partial title search"
+					},
+					"response": [
+						{
+							"name": "200 - Success",
+							"originalRequest": {
+								"method": "GET",
+								"header": [{"key": "Authorization", "value": "Bearer {{token}}"}],
+								"url": {"raw": "{{base_url}}/api/tasks?limit=10&page=1", "host": ["{{base_url}}"], "path": ["api", "tasks"], "query": [{"key": "limit", "value": "10"}, {"key": "page", "value": "1"}]}
+							},
+							"status": "OK",
+							"code": 200,
+							"body": "{\n    \"status\": \"success\",\n    \"data\": [\n        {\n            \"id\": \"uuid-here\",\n            \"title\": \"Implement Login Feature\",\n            \"description\": \"Create login page\",\n            \"status\": \"pending\",\n            \"assignee_id\": \"user-uuid\",\n            \"created_at\": \"2026-09-18T12:00:00Z\",\n            \"updated_at\": \"2026-09-18T12:00:00Z\"\n        }\n    ],\n    \"meta\": {\n        \"total\": 1,\n        \"page\": 1,\n        \"limit\": 10\n    }\n}"
+						}
+					]
+				},
+				{
+					"name": "Get Task Detail",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/tasks/{{task_id}}",
+							"host": ["{{base_url}}"],
+							"path": ["api", "tasks", "{{task_id}}"]
+						},
+						"description": "Get detailed information for a specific task by ID.\n\n**Path Parameters:**\n- `id` (string, required) - Task UUID"
+					},
+					"response": [
+						{
+							"name": "200 - Success",
+							"originalRequest": {
+								"method": "GET",
+								"header": [{"key": "Authorization", "value": "Bearer {{token}}"}],
+								"url": {"raw": "{{base_url}}/api/tasks/{{task_id}}", "host": ["{{base_url}}"], "path": ["api", "tasks", "{{task_id}}"]}
+							},
+							"status": "OK",
+							"code": 200,
+							"body": "{\n    \"status\": \"success\",\n    \"data\": {\n        \"id\": \"uuid-here\",\n        \"title\": \"Implement Login Feature\",\n        \"description\": \"Create login page with JWT authentication\",\n        \"status\": \"pending\",\n        \"assignee_id\": \"user-uuid\",\n        \"created_at\": \"2026-09-18T12:00:00Z\",\n        \"updated_at\": \"2026-09-18T12:00:00Z\"\n    }\n}"
+						},
+						{
+							"name": "404 - Not Found",
+							"originalRequest": {
+								"method": "GET",
+								"header": [{"key": "Authorization", "value": "Bearer {{token}}"}],
+								"url": {"raw": "{{base_url}}/api/tasks/invalid-id", "host": ["{{base_url}}"], "path": ["api", "tasks", "invalid-id"]}
+							},
+							"status": "Not Found",
+							"code": 404,
+							"body": "{\n    \"status\": \"error\",\n    \"code\": \"NOT_FOUND\",\n    \"message\": \"Resource not found\",\n    \"timestamp\": \"2026-09-18T12:00:00Z\"\n}"
+						}
+					]
+				},
+				{
+					"name": "Update Task",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"title\": \"Implement Login Feature - Updated\",\n    \"description\": \"Updated description with OAuth support\",\n    \"status\": \"in-progress\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/tasks/{{task_id}}",
+							"host": ["{{base_url}}"],
+							"path": ["api", "tasks", "{{task_id}}"]
+						},
+						"description": "Update an existing task. Only fields provided in the body will be updated (partial update).\n\n**Path Parameters:**\n- `id` (string, required) - Task UUID\n\n**Request Body (all optional):**\n- `title` (string)\n- `description` (string)\n- `status` (string) - `pending`, `in-progress`, `completed`"
+					},
+					"response": [
+						{
+							"name": "200 - Success",
+							"originalRequest": {
+								"method": "PUT",
+								"header": [
+									{"key": "Content-Type", "value": "application/json"},
+									{"key": "Authorization", "value": "Bearer {{token}}"}
+								],
+								"body": {"mode": "raw", "raw": "{\n    \"status\": \"in-progress\"\n}"},
+								"url": {"raw": "{{base_url}}/api/tasks/{{task_id}}", "host": ["{{base_url}}"], "path": ["api", "tasks", "{{task_id}}"]}
+							},
+							"status": "OK",
+							"code": 200,
+							"body": "{\n    \"status\": \"success\",\n    \"data\": {\n        \"id\": \"uuid-here\",\n        \"title\": \"Implement Login Feature - Updated\",\n        \"description\": \"Updated description\",\n        \"status\": \"in-progress\",\n        \"assignee_id\": \"user-uuid\",\n        \"created_at\": \"2026-09-18T12:00:00Z\",\n        \"updated_at\": \"2026-09-18T12:05:00Z\"\n    }\n}"
+						}
+					]
+				},
+				{
+					"name": "Assign Task (DB Transaction)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"assignee_id\": \"target-user-uuid-here\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/tasks/{{task_id}}/assign",
+							"host": ["{{base_url}}"],
+							"path": ["api", "tasks", "{{task_id}}", "assign"]
+						},
+						"description": "Assign a task to another user. This operation runs inside a **database transaction** that:\n1. Updates the task's assignee\n2. Creates a log entry in `task_logs` table\n3. Mocks a notification\n\nIf any step fails, all changes are **rolled back**.\n\n**Path Parameters:**\n- `id` (string, required) - Task UUID\n\n**Request Body:**\n- `assignee_id` (string, required) - The UUID of the user to assign the task to"
+					},
+					"response": [
+						{
+							"name": "200 - Success",
+							"originalRequest": {
+								"method": "POST",
+								"header": [
+									{"key": "Content-Type", "value": "application/json"},
+									{"key": "Authorization", "value": "Bearer {{token}}"}
+								],
+								"body": {"mode": "raw", "raw": "{\n    \"assignee_id\": \"target-user-uuid\"\n}"},
+								"url": {"raw": "{{base_url}}/api/tasks/{{task_id}}/assign", "host": ["{{base_url}}"], "path": ["api", "tasks", "{{task_id}}", "assign"]}
+							},
+							"status": "OK",
+							"code": 200,
+							"body": "{\n    \"status\": \"success\",\n    \"data\": {\n        \"message\": \"Task assigned successfully\"\n    }\n}"
+						}
+					]
+				},
+				{
+					"name": "Delete Task",
+					"request": {
+						"method": "DELETE",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/tasks/{{task_id}}",
+							"host": ["{{base_url}}"],
+							"path": ["api", "tasks", "{{task_id}}"]
+						},
+						"description": "Delete a task by ID. Only the task owner (assignee) can delete it.\n\n**Path Parameters:**\n- `id` (string, required) - Task UUID"
+					},
+					"response": [
+						{
+							"name": "200 - Success",
+							"originalRequest": {
+								"method": "DELETE",
+								"header": [{"key": "Authorization", "value": "Bearer {{token}}"}],
+								"url": {"raw": "{{base_url}}/api/tasks/{{task_id}}", "host": ["{{base_url}}"], "path": ["api", "tasks", "{{task_id}}"]}
+							},
+							"status": "OK",
+							"code": 200,
+							"body": "{\n    \"status\": \"success\"\n}"
+						}
+					]
+				}
+			]
+		}
+	]
+}
