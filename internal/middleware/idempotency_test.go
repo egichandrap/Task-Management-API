@@ -125,6 +125,7 @@ func TestIdempotency(t *testing.T) {
 		}
 	})
 
+	// Sequential -> 2 substests: first request executes the handler and stores the original status, replay returns the stored response and status without running the handler
 	t.Run("first request executes the handler and stores the original status", func(t *testing.T) {
 		store := newFakeStore()
 		var calls atomic.Int32
@@ -217,6 +218,7 @@ func TestIdempotency(t *testing.T) {
 		}
 	})
 
+	// Concurrent duplicate -> substest: concurrent requests with the same key execute the handler once, subs test: locks are cleaned up after the request
 	t.Run("concurrent requests with the same key execute the handler once", func(t *testing.T) {
 		store := newFakeStore()
 		var calls atomic.Int32
