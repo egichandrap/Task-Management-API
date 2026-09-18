@@ -1,20 +1,29 @@
 package handler
 
 import (
+	"context"
 	"net/http"
 
-	"task-api/internal/usecase"
+	"task-api/internal/domain/user"
 	"task-api/pkg/errors"
 	"task-api/pkg/response"
 
 	"github.com/gin-gonic/gin"
 )
 
-type AuthHandler struct {
-	usecase usecase.AuthUsecase
+// AuthUsecase is the driving port of the User context. Following the Go
+// idiom, it is defined at the consumer side with only the operations the
+// handler needs; the application layer provides the implementation.
+type AuthUsecase interface {
+	Register(ctx context.Context, username, password string) (*user.User, error)
+	Login(ctx context.Context, username, password string) (string, error)
 }
 
-func NewAuthHandler(usecase usecase.AuthUsecase) *AuthHandler {
+type AuthHandler struct {
+	usecase AuthUsecase
+}
+
+func NewAuthHandler(usecase AuthUsecase) *AuthHandler {
 	return &AuthHandler{usecase: usecase}
 }
 

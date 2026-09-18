@@ -1,4 +1,4 @@
-package usecase_test
+package task
 
 import (
 	"context"
@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"task-api/internal/domain/task"
-	"task-api/internal/usecase"
 	"task-api/pkg/errors"
 )
 
@@ -93,9 +92,9 @@ func (f *fakeTaskRepo) SaveAssignment(_ context.Context, t *task.Task, log *task
 	return nil
 }
 
-func newTaskUsecase(repo task.Repository) usecase.TaskUsecase {
+func newTaskUsecase(repo task.Repository) *taskUsecase {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	return usecase.NewTaskUsecase(repo, log)
+	return New(repo, log)
 }
 
 func seedTask(t *testing.T, repo *fakeTaskRepo, assignee string) *task.Task {

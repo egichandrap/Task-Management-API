@@ -9,7 +9,8 @@ import (
 	"task-api/internal/handler"
 	"task-api/internal/middleware"
 	"task-api/internal/repository"
-	"task-api/internal/usecase"
+	taskusecase "task-api/internal/usecase/task"
+	userusecase "task-api/internal/usecase/user"
 	"task-api/pkg/logger"
 	"task-api/pkg/utils"
 
@@ -56,9 +57,9 @@ func main() {
 	taskRepo := repository.NewTaskRepository(db)
 	idemStore := repository.NewIdempotencyStore(db)
 
-	// 2. Usecases (application layer)
-	authUsecase := usecase.NewAuthUsecase(userRepo, utils.JWTIssuer{Secret: cfg.JWTSecret}, logger.Log)
-	taskUsecase := usecase.NewTaskUsecase(taskRepo, logger.Log)
+	// 2. Usecases (application layer, one service per bounded context)
+	authUsecase := userusecase.New(userRepo, utils.JWTIssuer{Secret: cfg.JWTSecret}, logger.Log)
+	taskUsecase := taskusecase.New(taskRepo, logger.Log)
 
 	// 3. Handlers (transport layer)
 	authHandler := handler.NewAuthHandler(authUsecase)

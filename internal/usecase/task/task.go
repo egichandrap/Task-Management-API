@@ -1,4 +1,6 @@
-package usecase
+// Package task contains the application services of the Task bounded
+// context. It orchestrates the Task aggregate and its repository port.
+package task
 
 import (
 	"context"
@@ -9,22 +11,15 @@ import (
 	"task-api/pkg/errors"
 )
 
-// TaskUsecase is the application port consumed by the transport layer.
-type TaskUsecase interface {
-	Create(ctx context.Context, title, description, assigneeID string) (*task.Task, error)
-	List(ctx context.Context, filter task.Filter) ([]task.Task, int64, error)
-	Detail(ctx context.Context, id, userID string) (*task.Task, error)
-	Update(ctx context.Context, id, userID string, title, description, status string) (*task.Task, error)
-	Delete(ctx context.Context, id, userID string) error
-	Assign(ctx context.Context, id, newAssigneeID, changedBy string) error
-}
-
 type taskUsecase struct {
 	repo task.Repository
 	log  *slog.Logger
 }
 
-func NewTaskUsecase(repo task.Repository, log *slog.Logger) TaskUsecase {
+// New builds the task application service. The driving port it satisfies is
+// defined by the transport layer (consumer side), following the Go idiom of
+// declaring interfaces where they are used.
+func New(repo task.Repository, log *slog.Logger) *taskUsecase {
 	return &taskUsecase{repo: repo, log: log}
 }
 

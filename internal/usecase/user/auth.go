@@ -1,4 +1,6 @@
-package usecase
+// Package user contains the application services of the User bounded
+// context: registration and login.
+package user
 
 import (
 	"context"
@@ -10,16 +12,10 @@ import (
 	"task-api/pkg/utils"
 )
 
-// TokenIssuer is the application port for credential issuance.
+// TokenIssuer is the driven port for credential issuance.
 // The usecase depends on this abstraction, not on the JWT library.
 type TokenIssuer interface {
 	Issue(userID string) (string, error)
-}
-
-// AuthUsecase is the application port consumed by the transport layer.
-type AuthUsecase interface {
-	Register(ctx context.Context, username, password string) (*user.User, error)
-	Login(ctx context.Context, username, password string) (string, error)
 }
 
 type authUsecase struct {
@@ -28,7 +24,10 @@ type authUsecase struct {
 	log    *slog.Logger
 }
 
-func NewAuthUsecase(repo user.Repository, tokens TokenIssuer, log *slog.Logger) AuthUsecase {
+// New builds the auth application service. The driving port it satisfies is
+// defined by the transport layer (consumer side), following the Go idiom of
+// declaring interfaces where they are used.
+func New(repo user.Repository, tokens TokenIssuer, log *slog.Logger) *authUsecase {
 	return &authUsecase{repo: repo, tokens: tokens, log: log}
 }
 

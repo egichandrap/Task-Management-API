@@ -1,4 +1,4 @@
-package usecase_test
+package user
 
 import (
 	"context"
@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"task-api/internal/domain/user"
-	"task-api/internal/usecase"
 	"task-api/pkg/errors"
 	"task-api/pkg/utils"
 )
@@ -46,7 +45,7 @@ func (f *fakeUserRepo) GetByUsername(_ context.Context, username user.Username) 
 	return u, nil
 }
 
-// fakeTokens implements usecase.TokenIssuer.
+// fakeTokens implements TokenIssuer.
 type fakeTokens struct {
 	err    error
 	issued []string
@@ -60,9 +59,9 @@ func (f *fakeTokens) Issue(userID string) (string, error) {
 	return "token-" + userID, nil
 }
 
-func newAuthUsecase(repo user.Repository, tokens usecase.TokenIssuer) usecase.AuthUsecase {
+func newAuthUsecase(repo user.Repository, tokens TokenIssuer) *authUsecase {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	return usecase.NewAuthUsecase(repo, tokens, log)
+	return New(repo, tokens, log)
 }
 
 func TestAuthUsecaseRegister(t *testing.T) {

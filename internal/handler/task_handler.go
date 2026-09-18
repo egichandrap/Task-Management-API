@@ -1,23 +1,35 @@
 package handler
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 	"time"
 
 	"task-api/internal/domain/task"
-	"task-api/internal/usecase"
 	"task-api/pkg/errors"
 	"task-api/pkg/response"
 
 	"github.com/gin-gonic/gin"
 )
 
-type TaskHandler struct {
-	usecase usecase.TaskUsecase
+// TaskUsecase is the driving port of the Task context. Following the Go
+// idiom, it is defined at the consumer side with only the operations the
+// handler needs; the application layer provides the implementation.
+type TaskUsecase interface {
+	Create(ctx context.Context, title, description, assigneeID string) (*task.Task, error)
+	List(ctx context.Context, filter task.Filter) ([]task.Task, int64, error)
+	Detail(ctx context.Context, id, userID string) (*task.Task, error)
+	Update(ctx context.Context, id, userID string, title, description, status string) (*task.Task, error)
+	Delete(ctx context.Context, id, userID string) error
+	Assign(ctx context.Context, id, newAssigneeID, changedBy string) error
 }
 
-func NewTaskHandler(usecase usecase.TaskUsecase) *TaskHandler {
+type TaskHandler struct {
+	usecase TaskUsecase
+}
+
+func NewTaskHandler(usecase TaskUsecase) *TaskHandler {
 	return &TaskHandler{usecase: usecase}
 }
 
