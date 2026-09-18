@@ -19,3 +19,13 @@ func ValidateJWT(tokenStr string, secret string) (*jwt.Token, error) {
 		return []byte(secret), nil
 	})
 }
+
+// JWTIssuer issues signed JWT access tokens. It adapts the JWT library to
+// the TokenIssuer port required by the auth usecase.
+type JWTIssuer struct {
+	Secret string
+}
+
+func (i JWTIssuer) Issue(userID string) (string, error) {
+	return GenerateJWT(userID, i.Secret)
+}

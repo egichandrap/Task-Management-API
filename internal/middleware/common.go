@@ -1,13 +1,13 @@
 package middleware
 
 import (
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"log/slog"
+	"task-api/pkg/errors"
 	"task-api/pkg/logger"
 	"task-api/pkg/response"
-	"task-api/pkg/errors"
-	"github.com/gin-gonic/gin"
 	"time"
-	"github.com/google/uuid"
 )
 
 func Logger() gin.HandlerFunc {
@@ -15,12 +15,12 @@ func Logger() gin.HandlerFunc {
 		start := time.Now()
 		reqID := uuid.New().String()
 		c.Set("request_id", reqID)
-		
+
 		c.Next()
-		
+
 		latency := time.Since(start)
 		status := c.Writer.Status()
-		
+
 		logArgs := []any{
 			slog.String("request_id", reqID),
 			slog.String("method", c.Request.Method),
@@ -28,7 +28,7 @@ func Logger() gin.HandlerFunc {
 			slog.Int("status_code", status),
 			slog.Duration("latency", latency),
 		}
-		
+
 		if status >= 500 {
 			logger.Log.Error("Server Error", logArgs...)
 		} else if status >= 400 {
@@ -47,16 +47,19 @@ func ErrorHandler() gin.HandlerFunc {
 				response.JSONError(c, 500, "INTERNAL_SERVER_ERROR", "An unexpected error occurred")
 			}
 		}()
-		
+
 		c.Next()
-		
+
 		if len(c.Errors) > 0 {
 			err := c.Errors.Last().Err
 			if appErr, ok := err.(*customerrors.AppError); ok {
 				response.JSONError(c, appErr.Status, appErr.Code, appErr.Message)
 				return
 			}
-			response.JSONError(c, 500, "INTERNAL_SERVER_ERROR", err.Error())
+			// Unexpected (possibly infrastructure) error: log the details,
+			// but never expose them to the API consumer.
+			logger.Log.Error("Unhandled error", slog.Any("error", err), slog.String("request_id", c.GetString("request_id")))
+			response.JSONError(c, 500, "INTERNAL_SERVER_ERROR", "An unexpected error occurred")
 		}
 	}
 }

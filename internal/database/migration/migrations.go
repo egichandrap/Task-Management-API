@@ -9,6 +9,7 @@ func AllMigrations() []Migration {
 		migration003CreateTaskLogsTable(),
 		migration004CreateIdempotencyRecordsTable(),
 		migration005AddIndexes(),
+		migration006AddIdempotencyStatus(),
 	}
 }
 
@@ -114,5 +115,21 @@ func migration005AddIndexes() Migration {
 		DROP INDEX IF EXISTS idx_task_logs_task_id;
 		DROP INDEX IF EXISTS idx_task_logs_changed_by;
 		`,
+	}
+}
+
+// ---------------------------------------------------------------
+// 006 - Store the original HTTP status of idempotent responses
+// ---------------------------------------------------------------
+func migration006AddIdempotencyStatus() Migration {
+	return Migration{
+		Version:     6,
+		Description: "Add status column to idempotency_records",
+		Up: `
+		ALTER TABLE idempotency_records
+			ADD COLUMN IF NOT EXISTS status INTEGER NOT NULL DEFAULT 200;`,
+		Down: `
+		ALTER TABLE idempotency_records
+			DROP COLUMN IF EXISTS status;`,
 	}
 }

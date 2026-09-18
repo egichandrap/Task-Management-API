@@ -2,19 +2,21 @@ package main
 
 import (
 	"database/sql"
+	"log"
+
 	"task-api/internal/config"
 	"task-api/internal/database/migration"
-	"task-api/internal/domain"
 	"task-api/internal/handler"
 	"task-api/internal/middleware"
 	"task-api/internal/repository"
+	"task-api/internal/usecase"
 	"task-api/pkg/logger"
+	"task-api/pkg/utils"
 
 	"github.com/gin-gonic/gin"
 	_ "github.com/lib/pq"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
-	"log"
 )
 
 func main() {
@@ -40,20 +42,29 @@ func main() {
 	rawDB.Close()
 
 	// ── Open GORM connection for the app ───────────────────────────
-	db, err := gorm.Open(postgres.Open(cfg.DBDSN), &gorm.Config{})
+	// TranslateError maps DB constraint violations (e.g. unique username)
+	// to gorm.ErrDuplicatedKey so the repository can translate them into
+	// domain errors. The SQL migrations are the single source of schema truth.
+	db, err := gorm.Open(postgres.Open(cfg.DBDSN), &gorm.Config{TranslateError: true})
 	if err != nil {
 		log.Fatal("Failed to connect to db", err)
 	}
 
-	// AutoMigrate kept as safety net for any GORM-specific column tweaks
-	db.AutoMigrate(&domain.User{}, &domain.Task{}, &domain.TaskLog{}, &domain.IdempotencyRecord{})
-
+	// ── Dependency Injection ───────────────────────────────────────
+	// 1. Repositories (infrastructure adapters implementing domain ports)
 	userRepo := repository.NewUserRepository(db)
 	taskRepo := repository.NewTaskRepository(db)
+	idemStore := repository.NewIdempotencyStore(db)
 
-	authHandler := handler.NewAuthHandler(userRepo, cfg)
-	taskHandler := handler.NewTaskHandler(taskRepo)
+	// 2. Usecases (application layer)
+	authUsecase := usecase.NewAuthUsecase(userRepo, utils.JWTIssuer{Secret: cfg.JWTSecret}, logger.Log)
+	taskUsecase := usecase.NewTaskUsecase(taskRepo, logger.Log)
 
+	// 3. Handlers (transport layer)
+	authHandler := handler.NewAuthHandler(authUsecase)
+	taskHandler := handler.NewTaskHandler(taskUsecase)
+
+	// 4. Router
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
 
@@ -68,7 +79,7 @@ func main() {
 		protected := api.Group("/")
 		protected.Use(middleware.Auth(cfg))
 		{
-			protected.POST("/tasks", middleware.Idempotency(taskRepo), taskHandler.Create)
+			protected.POST("/tasks", middleware.Idempotency(idemStore), taskHandler.Create)
 			protected.GET("/tasks", taskHandler.List)
 			protected.GET("/tasks/:id", taskHandler.Detail)
 			protected.PUT("/tasks/:id", taskHandler.Update)

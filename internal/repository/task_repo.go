@@ -2,104 +2,162 @@ package repository
 
 import (
 	"context"
-	"task-api/internal/domain"
+	"errors"
+	"time"
+
+	"task-api/internal/domain/task"
+
 	"gorm.io/gorm"
 )
+
+// taskModel is the persistence model of the Task aggregate. It is kept
+// separate from the domain entity so the domain stays free of GORM concerns.
+type taskModel struct {
+	ID          string `gorm:"primaryKey;type:uuid"`
+	Title       string `gorm:"type:varchar(255);not null"`
+	Description string `gorm:"type:text"`
+	Status      string `gorm:"type:varchar(20);not null"`
+	AssigneeID  string `gorm:"type:uuid;not null;index"`
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+}
+
+func (taskModel) TableName() string { return "tasks" }
+
+// taskLogModel is the persistence model of the TaskLog child entity.
+type taskLogModel struct {
+	ID        string `gorm:"primaryKey;type:uuid"`
+	TaskID    string `gorm:"type:uuid;not null;index"`
+	Action    string `gorm:"type:varchar(50);not null"`
+	OldValue  string `gorm:"type:text"`
+	NewValue  string `gorm:"type:text"`
+	ChangedBy string `gorm:"type:uuid;not null"`
+	CreatedAt time.Time
+}
+
+func (taskLogModel) TableName() string { return "task_logs" }
+
+func taskToDomain(m taskModel) *task.Task {
+	return &task.Task{
+		ID:          m.ID,
+		Title:       m.Title,
+		Description: m.Description,
+		Status:      task.TaskStatus(m.Status),
+		AssigneeID:  m.AssigneeID,
+		CreatedAt:   m.CreatedAt,
+		UpdatedAt:   m.UpdatedAt,
+	}
+}
+
+func taskFromDomain(t *task.Task) taskModel {
+	return taskModel{
+		ID:          t.ID,
+		Title:       t.Title,
+		Description: t.Description,
+		Status:      t.Status.String(),
+		AssigneeID:  t.AssigneeID,
+		CreatedAt:   t.CreatedAt,
+		UpdatedAt:   t.UpdatedAt,
+	}
+}
 
 type taskRepo struct {
 	db *gorm.DB
 }
 
-func NewTaskRepository(db *gorm.DB) domain.TaskRepository {
+func NewTaskRepository(db *gorm.DB) task.Repository {
 	return &taskRepo{db: db}
 }
 
-func (r *taskRepo) Create(ctx context.Context, task *domain.Task) error {
-	return r.db.WithContext(ctx).Create(task).Error
+func (r *taskRepo) Create(ctx context.Context, t *task.Task) error {
+	m := taskFromDomain(t)
+	return r.db.WithContext(ctx).Create(&m).Error
 }
 
-func (r *taskRepo) FindAll(ctx context.Context, filter domain.TaskFilter) ([]domain.Task, int64, error) {
-	var tasks []domain.Task
+func (r *taskRepo) FindAll(ctx context.Context, filter task.Filter) ([]task.Task, int64, error) {
+	var models []taskModel
 	var count int64
-	
-	query := r.db.WithContext(ctx).Model(&domain.Task{}).Where("assignee_id = ?", filter.Assignee)
-	
+
+	query := r.db.WithContext(ctx).Model(&taskModel{}).Where("assignee_id = ?", filter.Assignee)
+
 	if filter.Status != "" {
 		query = query.Where("status = ?", filter.Status)
 	}
 	if filter.Title != "" {
 		query = query.Where("title LIKE ?", "%"+filter.Title+"%")
 	}
-	
-	query.Count(&count)
-	
+
+	if err := query.Count(&count).Error; err != nil {
+		return nil, 0, err
+	}
+
 	if filter.Limit > 0 {
 		query = query.Limit(filter.Limit)
 	}
 	if filter.Offset > 0 {
 		query = query.Offset(filter.Offset)
 	}
-	
-	err := query.Find(&tasks).Error
-	return tasks, count, err
+
+	if err := query.Find(&models).Error; err != nil {
+		return nil, 0, err
+	}
+
+	tasks := make([]task.Task, 0, len(models))
+	for _, m := range models {
+		tasks = append(tasks, *taskToDomain(m))
+	}
+	return tasks, count, nil
 }
 
-func (r *taskRepo) FindByID(ctx context.Context, id string) (*domain.Task, error) {
-	var task domain.Task
-	err := r.db.WithContext(ctx).Where("id = ?", id).First(&task).Error
-	return &task, err
+func (r *taskRepo) FindByID(ctx context.Context, id string) (*task.Task, error) {
+	var m taskModel
+	err := r.db.WithContext(ctx).Where("id = ?", id).First(&m).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		// Translate the infrastructure error into a domain error so
+		// upper layers never depend on GORM.
+		return nil, task.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return taskToDomain(m), nil
 }
 
-func (r *taskRepo) Update(ctx context.Context, task *domain.Task) error {
-	return r.db.WithContext(ctx).Save(task).Error
+func (r *taskRepo) Update(ctx context.Context, t *task.Task) error {
+	m := taskFromDomain(t)
+	return r.db.WithContext(ctx).Model(&taskModel{ID: m.ID}).Updates(map[string]any{
+		"title":       m.Title,
+		"description": m.Description,
+		"status":      m.Status,
+		"assignee_id": m.AssigneeID,
+		"updated_at":  m.UpdatedAt,
+	}).Error
 }
 
 func (r *taskRepo) Delete(ctx context.Context, id string) error {
-	return r.db.WithContext(ctx).Delete(&domain.Task{}, "id = ?", id).Error
+	return r.db.WithContext(ctx).Delete(&taskModel{}, "id = ?", id).Error
 }
 
-func (r *taskRepo) AssignTaskTx(ctx context.Context, taskID, newAssigneeID, changedBy string) error {
+// SaveAssignment persists the aggregate's assignee change and its audit log
+// inside a single database transaction.
+func (r *taskRepo) SaveAssignment(ctx context.Context, t *task.Task, log *task.TaskLog) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var task domain.Task
-		if err := tx.Where("id = ?", taskID).First(&task).Error; err != nil {
+		if err := tx.Model(&taskModel{ID: t.ID}).Updates(map[string]any{
+			"assignee_id": t.AssigneeID,
+			"updated_at":  t.UpdatedAt,
+		}).Error; err != nil {
 			return err
 		}
-		
-		oldAssignee := task.AssigneeID
-		task.AssigneeID = newAssigneeID
-		
-		if err := tx.Save(&task).Error; err != nil {
-			return err
+
+		lm := taskLogModel{
+			ID:        log.ID,
+			TaskID:    log.TaskID,
+			Action:    log.Action,
+			OldValue:  log.OldValue,
+			NewValue:  log.NewValue,
+			ChangedBy: log.ChangedBy,
+			CreatedAt: log.CreatedAt,
 		}
-		
-		log := domain.TaskLog{
-			TaskID:    taskID,
-			Action:    "assigned",
-			OldValue:  oldAssignee,
-			NewValue:  newAssigneeID,
-			ChangedBy: changedBy,
-		}
-		if err := tx.Create(&log).Error; err != nil {
-			return err
-		}
-		
-		// Mock notification
-		// log.Println("Notification sent for task assignment")
-		
-		return nil
+		return tx.Create(&lm).Error
 	})
-}
-
-func (r *taskRepo) SaveIdempotency(ctx context.Context, key string, response string) error {
-	record := domain.IdempotencyRecord{
-		Key:      key,
-		Response: response,
-	}
-	return r.db.WithContext(ctx).Create(&record).Error
-}
-
-func (r *taskRepo) GetIdempotency(ctx context.Context, key string) (*domain.IdempotencyRecord, error) {
-	var record domain.IdempotencyRecord
-	err := r.db.WithContext(ctx).Where("key = ?", key).First(&record).Error
-	return &record, err
 }

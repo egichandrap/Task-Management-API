@@ -1,22 +1,21 @@
 package handler
 
 import (
-	"task-api/internal/domain"
-	"task-api/internal/config"
-	"task-api/pkg/utils"
-	"task-api/pkg/response"
-	"task-api/pkg/errors"
-	"github.com/gin-gonic/gin"
 	"net/http"
+
+	"task-api/internal/usecase"
+	"task-api/pkg/errors"
+	"task-api/pkg/response"
+
+	"github.com/gin-gonic/gin"
 )
 
 type AuthHandler struct {
-	repo domain.UserRepository
-	cfg  *config.Config
+	usecase usecase.AuthUsecase
 }
 
-func NewAuthHandler(repo domain.UserRepository, cfg *config.Config) *AuthHandler {
-	return &AuthHandler{repo: repo, cfg: cfg}
+func NewAuthHandler(usecase usecase.AuthUsecase) *AuthHandler {
+	return &AuthHandler{usecase: usecase}
 }
 
 type RegisterReq struct {
@@ -30,24 +29,14 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		c.Error(customerrors.ErrBadRequest)
 		return
 	}
-	
-	hash, err := utils.HashPassword(req.Password)
+
+	registered, err := h.usecase.Register(c.Request.Context(), req.Username, req.Password)
 	if err != nil {
-		c.Error(customerrors.ErrInternalServer)
+		c.Error(err)
 		return
 	}
-	
-	user := &domain.User{
-		Username: req.Username,
-		Password: hash,
-	}
-	
-	if err := h.repo.Create(c.Request.Context(), user); err != nil {
-		c.Error(customerrors.ErrConflict)
-		return
-	}
-	
-	response.JSONSuccess(c, http.StatusCreated, gin.H{"id": user.ID, "username": user.Username}, nil)
+
+	response.JSONSuccess(c, http.StatusCreated, gin.H{"id": registered.ID, "username": registered.Username.String()}, nil)
 }
 
 func (h *AuthHandler) Login(c *gin.Context) {
@@ -56,23 +45,12 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		c.Error(customerrors.ErrBadRequest)
 		return
 	}
-	
-	user, err := h.repo.GetByUsername(c.Request.Context(), req.Username)
+
+	token, err := h.usecase.Login(c.Request.Context(), req.Username, req.Password)
 	if err != nil {
-		c.Error(customerrors.ErrUnauthorized)
+		c.Error(err)
 		return
 	}
-	
-	if !utils.CheckPasswordHash(req.Password, user.Password) {
-		c.Error(customerrors.ErrUnauthorized)
-		return
-	}
-	
-	token, err := utils.GenerateJWT(user.ID, h.cfg.JWTSecret)
-	if err != nil {
-		c.Error(customerrors.ErrInternalServer)
-		return
-	}
-	
+
 	response.JSONSuccess(c, http.StatusOK, gin.H{"token": token}, nil)
 }

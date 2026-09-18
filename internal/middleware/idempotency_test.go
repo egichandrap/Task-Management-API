@@ -1,131 +1,226 @@
 package middleware
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
-	"task-api/internal/domain"
 	"github.com/gin-gonic/gin"
 )
 
-type mockIdempotencyRepo struct {
-	mu      sync.Mutex
-	records map[string]*domain.IdempotencyRecord
-	calls   int
+// fakeStore implements IdempotencyStore in memory for unit tests.
+type fakeStore struct {
+	mu        sync.Mutex
+	records   map[string]IdempotencyRecord
+	getErr    error
+	saveErr   error
+	saveCalls int
 }
 
-func newMockRepo() *mockIdempotencyRepo {
-	return &mockIdempotencyRepo{
-		records: make(map[string]*domain.IdempotencyRecord),
-	}
+func newFakeStore() *fakeStore {
+	return &fakeStore{records: map[string]IdempotencyRecord{}}
 }
 
-func (m *mockIdempotencyRepo) SaveIdempotency(ctx context.Context, key string, response string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.records[key] = &domain.IdempotencyRecord{
-		Key:       key,
-		Response:  response,
-		CreatedAt: time.Now(),
+func (f *fakeStore) Get(_ context.Context, key string) (*IdempotencyRecord, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.getErr != nil {
+		return nil, false, f.getErr
 	}
-	m.calls++
+	rec, ok := f.records[key]
+	if !ok {
+		return nil, false, nil
+	}
+	return &rec, true, nil
+}
+
+func (f *fakeStore) Save(_ context.Context, key string, status int, body string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.saveErr != nil {
+		return f.saveErr
+	}
+	f.records[key] = IdempotencyRecord{Key: key, Status: status, Body: body, CreatedAt: time.Now()}
+	f.saveCalls++
 	return nil
 }
 
-func (m *mockIdempotencyRepo) GetIdempotency(ctx context.Context, key string) (*domain.IdempotencyRecord, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if record, exists := m.records[key]; exists {
-		return record, nil
-	}
-	return nil, nil // Not found
+// newIdempotencyRouter builds a gin engine with an authenticated user in the
+// context and a single POST /tasks route guarded by the middleware.
+func newIdempotencyRouter(store IdempotencyStore, userID string, handlerCalls *atomic.Int32, work time.Duration) *gin.Engine {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(func(c *gin.Context) {
+		c.Set("user_id", userID)
+		c.Next()
+	})
+	r.POST("/tasks", Idempotency(store), func(c *gin.Context) {
+		handlerCalls.Add(1)
+		if work > 0 {
+			time.Sleep(work)
+		}
+		c.JSON(http.StatusCreated, gin.H{"user": c.GetString("user_id")})
+	})
+	return r
 }
 
-// Dummy methods to satisfy interface
-func (m *mockIdempotencyRepo) Create(ctx context.Context, task *domain.Task) error { return nil }
-func (m *mockIdempotencyRepo) FindAll(ctx context.Context, filter domain.TaskFilter) ([]domain.Task, int64, error) { return nil, 0, nil }
-func (m *mockIdempotencyRepo) FindByID(ctx context.Context, id string) (*domain.Task, error) { return nil, nil }
-func (m *mockIdempotencyRepo) Update(ctx context.Context, task *domain.Task) error { return nil }
-func (m *mockIdempotencyRepo) Delete(ctx context.Context, id string) error { return nil }
-func (m *mockIdempotencyRepo) AssignTaskTx(ctx context.Context, taskID, newAssigneeID, changedBy string) error { return nil }
+func doPost(r *gin.Engine, key string) *httptest.ResponseRecorder {
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/tasks", bytes.NewBufferString(`{}`))
+	if key != "" {
+		req.Header.Set("Idempotency-Key", key)
+	}
+	r.ServeHTTP(w, req)
+	return w
+}
 
+func TestIdempotency(t *testing.T) {
+	t.Run("without key the handler runs and nothing is stored", func(t *testing.T) {
+		store := newFakeStore()
+		var calls atomic.Int32
+		r := newIdempotencyRouter(store, "userA", &calls, 0)
 
-func TestIdempotency_RaceCondition(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	repo := newMockRepo()
-	router := gin.New()
-	
-	// Reset locks
-	idempotencyLocks = sync.Map{}
+		w := doPost(r, "")
 
-	router.Use(Idempotency(repo))
-	
-	var handlerCalls int
-	var handlerMu sync.Mutex
-	
-	router.POST("/tasks", func(c *gin.Context) {
-		// Simulate some work
-		time.Sleep(10 * time.Millisecond)
-		
-		handlerMu.Lock()
-		handlerCalls++
-		handlerMu.Unlock()
-		
-		c.JSON(http.StatusCreated, gin.H{"message": "Task created"})
-	})
-
-	t.Run("Sequential Requests", func(t *testing.T) {
-		req1, _ := http.NewRequest("POST", "/tasks", nil)
-		req1.Header.Set("Idempotency-Key", "seq-key-1")
-		w1 := httptest.NewRecorder()
-		router.ServeHTTP(w1, req1)
-		
-		if w1.Code != http.StatusCreated {
-			t.Errorf("expected status 201, got %d", w1.Code)
+		if w.Code != http.StatusCreated || calls.Load() != 1 {
+			t.Fatalf("expected handler to run once with 201, got %d/%d", w.Code, calls.Load())
 		}
-
-		req2, _ := http.NewRequest("POST", "/tasks", nil)
-		req2.Header.Set("Idempotency-Key", "seq-key-1")
-		w2 := httptest.NewRecorder()
-		router.ServeHTTP(w2, req2)
-
-		if w2.Code != http.StatusOK && w2.Code != http.StatusCreated {
-			t.Errorf("expected status 200 or 201, got %d", w2.Code)
-		}
-		
-		if repo.calls != 1 {
-			t.Errorf("expected repo save calls to be 1, got %d", repo.calls)
+		if len(store.records) != 0 || store.saveCalls != 0 {
+			t.Fatal("expected nothing to be stored")
 		}
 	})
 
-	t.Run("Concurrent Requests", func(t *testing.T) {
-		handlerCalls = 0 // reset
-		repo.calls = 0   // reset repo save calls
-		
-		concurrentCount := 50
+	t.Run("first request executes the handler and stores the original status", func(t *testing.T) {
+		store := newFakeStore()
+		var calls atomic.Int32
+		r := newIdempotencyRouter(store, "userA", &calls, 0)
+
+		w := doPost(r, "key-1")
+
+		if w.Code != http.StatusCreated || calls.Load() != 1 {
+			t.Fatalf("expected 201 with one handler call, got %d/%d", w.Code, calls.Load())
+		}
+		if store.saveCalls != 1 {
+			t.Fatalf("expected one save, got %d", store.saveCalls)
+		}
+		if store.records["userA:key-1"].Status != http.StatusCreated {
+			t.Fatal("expected the original 201 status code to be stored")
+		}
+	})
+
+	t.Run("replay returns the stored response and status without running the handler", func(t *testing.T) {
+		store := newFakeStore()
+		var calls atomic.Int32
+		r := newIdempotencyRouter(store, "userA", &calls, 0)
+
+		doPost(r, "key-1")
+		w := doPost(r, "key-1")
+
+		if calls.Load() != 1 {
+			t.Fatalf("expected handler to run only once, ran %d times", calls.Load())
+		}
+		if w.Code != http.StatusCreated {
+			t.Fatalf("expected replayed status 201, got %d", w.Code)
+		}
+		if w.Body.String() != store.records["userA:key-1"].Body {
+			t.Fatal("expected replayed body to match stored body")
+		}
+	})
+
+	t.Run("the same key from another user never replays another user's response", func(t *testing.T) {
+		store := newFakeStore()
+		var callsA, callsB atomic.Int32
+		rA := newIdempotencyRouter(store, "userA", &callsA, 0)
+		rB := newIdempotencyRouter(store, "userB", &callsB, 0)
+
+		wA := doPost(rA, "shared-key")
+		wB := doPost(rB, "shared-key")
+
+		if callsA.Load() != 1 || callsB.Load() != 1 {
+			t.Fatalf("expected each user to execute the handler once, got %d and %d", callsA.Load(), callsB.Load())
+		}
+		if wB.Body.String() == wA.Body.String() {
+			t.Fatal("expected userB to receive its own response, not userA's")
+		}
+		if _, ok := store.records["userB:shared-key"]; !ok {
+			t.Fatal("expected a separate record scoped to userB")
+		}
+	})
+
+	t.Run("store failure degrades to normal execution", func(t *testing.T) {
+		store := newFakeStore()
+		store.getErr = errors.New("db down")
+		var calls atomic.Int32
+		r := newIdempotencyRouter(store, "userA", &calls, 0)
+
+		w := doPost(r, "key-1")
+
+		if w.Code != http.StatusCreated || calls.Load() != 1 {
+			t.Fatalf("expected handler to execute despite store failure, got %d/%d", w.Code, calls.Load())
+		}
+	})
+
+	t.Run("error responses are not stored", func(t *testing.T) {
+		store := newFakeStore()
+		gin.SetMode(gin.TestMode)
+		r := gin.New()
+		r.Use(func(c *gin.Context) {
+			c.Set("user_id", "userA")
+			c.Next()
+		})
+		r.POST("/broken", Idempotency(store), func(c *gin.Context) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "bad"})
+		})
+
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/broken", bytes.NewBufferString(`{}`))
+		req.Header.Set("Idempotency-Key", "err-key")
+		r.ServeHTTP(w, req)
+
+		if _, ok := store.records["userA:err-key"]; ok {
+			t.Fatal("expected error response not to be stored")
+		}
+	})
+
+	t.Run("concurrent requests with the same key execute the handler once", func(t *testing.T) {
+		store := newFakeStore()
+		var calls atomic.Int32
+		r := newIdempotencyRouter(store, "userA", &calls, 20*time.Millisecond)
+
+		const n = 50
 		var wg sync.WaitGroup
-		wg.Add(concurrentCount)
-
-		for i := 0; i < concurrentCount; i++ {
+		wg.Add(n)
+		for i := 0; i < n; i++ {
 			go func() {
 				defer wg.Done()
-				req, _ := http.NewRequest("POST", "/tasks", nil)
-				req.Header.Set("Idempotency-Key", "concurrent-key-1")
-				w := httptest.NewRecorder()
-				router.ServeHTTP(w, req)
+				doPost(r, "race-key")
 			}()
 		}
 		wg.Wait()
 
-		if handlerCalls != 1 {
-			t.Errorf("expected handler to be called exactly once, got %d", handlerCalls)
+		if calls.Load() != 1 {
+			t.Fatalf("expected handler to execute exactly once, ran %d times", calls.Load())
 		}
-		if repo.calls != 1 {
-			t.Errorf("expected repo save to be called exactly once, got %d", repo.calls)
+		if store.saveCalls != 1 {
+			t.Fatalf("expected exactly one save, got %d", store.saveCalls)
+		}
+	})
+
+	t.Run("locks are cleaned up after the request", func(t *testing.T) {
+		store := newFakeStore()
+		var calls atomic.Int32
+		r := newIdempotencyRouter(store, "userA", &calls, 0)
+
+		doPost(r, "cleanup-key")
+
+		if _, loaded := idempotencyLocks.Load("userA:cleanup-key"); loaded {
+			t.Fatal("expected lock entry to be removed after the request")
 		}
 	})
 }
